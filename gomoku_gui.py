@@ -6,10 +6,10 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 import numpy as np
 from gomoku_env import GomokuEnv
-from dqn_agent import DQNAgent
 from mcts import MCTS
-from policy_value_net import PolicyValueAgent
+from improved_policy_value_net import ImprovedPolicyValueAgent
 from rule_based_ai import RuleBasedAI
+from config import MCTS_SIMULATIONS_PLAY, MCTS_C_PUCT, NUM_RES_BLOCKS, NUM_CHANNELS, BOARD_SIZE
 import os
 
 
@@ -22,7 +22,7 @@ class GomokuGUI:
         self.root.resizable(False, False)
         
         # 游戏参数
-        self.board_size = 15
+        self.board_size = BOARD_SIZE
         self.cell_size = 40
         self.piece_radius = 15
         
@@ -36,39 +36,33 @@ class GomokuGUI:
         # 游戏状态
         self.env = GomokuEnv(board_size=self.board_size)
         self.game_over = False
-        self.human_color = 1  # 1: 黑棋, -1: 白棋
+        self.human_color = 1
         self.ai_agent = None
-        self.ai_type = "DQN"
+        self.ai_type = "AlphaZero"
         self.last_move = None
-        
-        # 悔棋历史记录
-        self.move_history = []  # [(action, player, board_state), ...]
+        self.move_history = []
         
         # 创建界面
         self.create_widgets()
         
     def create_widgets(self):
         """创建界面组件"""
-        # 顶部控制面板
         control_frame = tk.Frame(self.root)
         control_frame.pack(pady=10)
         
-        # AI选择
         tk.Label(control_frame, text="选择AI:").grid(row=0, column=0, padx=5)
-        self.ai_var = tk.StringVar(value="DQN")
-        ai_choices = ["DQN", "AlphaZero", "规则AI"]
+        self.ai_var = tk.StringVar(value="AlphaZero")
+        ai_choices = ["AlphaZero", "规则AI"]
         ai_menu = ttk.Combobox(control_frame, textvariable=self.ai_var, 
                               values=ai_choices, state="readonly", width=12)
         ai_menu.grid(row=0, column=1, padx=5)
         
-        # 先后手选择
         tk.Label(control_frame, text="你执:").grid(row=0, column=2, padx=5)
-        self.color_var = tk.StringVar(value="黑棋")
+        self.color_var = tk.StringVar(value="白棋")
         color_menu = ttk.Combobox(control_frame, textvariable=self.color_var,
                                  values=["黑棋", "白棋"], state="readonly", width=8)
         color_menu.grid(row=0, column=3, padx=5)
         
-        # 按钮
         tk.Button(control_frame, text="开始游戏", command=self.start_game,
                  bg="#4CAF50", fg="white", width=10).grid(row=0, column=4, padx=5)
         tk.Button(control_frame, text="重新开始", command=self.restart_game,
@@ -76,17 +70,14 @@ class GomokuGUI:
         tk.Button(control_frame, text="悔棋", command=self.undo_move,
                  bg="#FF9800", fg="white", width=10).grid(row=0, column=6, padx=5)
         
-        # 棋盘画布
         canvas_size = self.cell_size * (self.board_size + 1)
         self.canvas = tk.Canvas(self.root, width=canvas_size, height=canvas_size,
                                bg=self.board_color, highlightthickness=0)
         self.canvas.pack(padx=20, pady=10)
         self.canvas.bind("<Button-1>", self.on_click)
         
-        # 绘制棋盘
         self.draw_board()
         
-        # 底部状态栏
         self.status_label = tk.Label(self.root, text="请点击'开始游戏'",
                                      font=("Arial", 12), fg="#2196F3")
         self.status_label.pack(pady=10)
@@ -95,60 +86,45 @@ class GomokuGUI:
         """绘制棋盘网格"""
         self.canvas.delete("all")
         
-        # 绘制网格线
         for i in range(self.board_size):
-            # 横线
             x1 = self.cell_size
             y1 = self.cell_size * (i + 1)
             x2 = self.cell_size * self.board_size
             y2 = y1
             self.canvas.create_line(x1, y1, x2, y2, fill=self.line_color, width=1)
             
-            # 竖线
             x1 = self.cell_size * (i + 1)
             y1 = self.cell_size
             x2 = x1
             y2 = self.cell_size * self.board_size
             self.canvas.create_line(x1, y1, x2, y2, fill=self.line_color, width=1)
         
-        # 绘制星位
         star_positions = [(3, 3), (3, 11), (11, 3), (11, 11), (7, 7)]
         for row, col in star_positions:
             x = self.cell_size * (col + 1)
             y = self.cell_size * (row + 1)
             self.canvas.create_oval(x-3, y-3, x+3, y+3, fill=self.line_color)
         
-        # 绘制坐标标签
         for i in range(self.board_size):
-            # 行号
             self.canvas.create_text(self.cell_size // 2, self.cell_size * (i + 1),
                                    text=str(i), font=("Arial", 10))
-            # 列号
             self.canvas.create_text(self.cell_size * (i + 1), self.cell_size // 2,
                                    text=str(i), font=("Arial", 10))
     
     def draw_piece(self, row, col, color, is_last=False):
-        """
-        绘制棋子
-        Args:
-            row, col: 棋子位置
-            color: 1黑棋, -1白棋
-            is_last: 是否为最后一步
-        """
+        """绘制棋子"""
         x = self.cell_size * (col + 1)
         y = self.cell_size * (row + 1)
         
         piece_color = self.black_color if color == 1 else self.white_color
         outline_color = self.white_color if color == 1 else self.black_color
         
-        # 绘制棋子
         self.canvas.create_oval(
             x - self.piece_radius, y - self.piece_radius,
             x + self.piece_radius, y + self.piece_radius,
             fill=piece_color, outline=outline_color, width=2
         )
         
-        # 标记最后一步
         if is_last:
             marker_radius = 5
             marker_color = self.last_move_color
@@ -162,7 +138,6 @@ class GomokuGUI:
         """重绘整个棋盘"""
         self.draw_board()
         
-        # 绘制所有棋子
         for row in range(self.board_size):
             for col in range(self.board_size):
                 if self.env.board[row, col] != 0:
@@ -171,63 +146,49 @@ class GomokuGUI:
     
     def start_game(self):
         """开始新游戏"""
-        # 加载AI
         self.ai_type = self.ai_var.get()
         self.update_status(f"正在加载{self.ai_type}...")
         self.root.update()
         
         try:
-            if self.ai_type == "DQN":
-                self.ai_agent = DQNAgent(board_size=self.board_size)
-                self.ai_agent.load('models/gomoku_dqn_final.pth')
-            elif self.ai_type == "AlphaZero":
-                # 优先加载改进版模型
-                model_files = [
-                    'models_improved_alphazero/alphazero_model_20000.pth',
-                    'models_improved_alphazero/alphazero_model_15000.pth',
-                    'models_improved_alphazero/alphazero_model_10000.pth',
-                    'models_improved_alphazero/alphazero_final.pth',
-                    'models_alphazero/alphazero_model_13000.pth',  # 最新训练模型
-                    'models_alphazero/alphazero_model_12500.pth',
-                    'models_alphazero/alphazero_model_12000.pth',
-                    'models_alphazero/alphazero_model_20000.pth',
-                    'models_alphazero/alphazero_model_15000.pth',
-                    'models_alphazero/alphazero_model_10000.pth',
-                    'models_alphazero/alphazero_final.pth',
-                    'models_alphazero/alphazero_model_7620.pth',
-                    'models_alphazero/alphazero_model_7500.pth',
-                    'models_alphazero/alphazero_model_7000.pth',
-                    'models_alphazero/alphazero_model_5000.pth',
-                    'models_alphazero/alphazero_model_1500.pth',
-                    'models_alphazero/alphazero_model_500.pth'
-                ]
+            if self.ai_type == "AlphaZero":
+                model_dir = 'models_standard'
+                model_files = []
                 
+                if os.path.exists(model_dir):
+                    # 按训练步数排序，优先选择最新模型
+                    for f in os.listdir(model_dir):
+                        if f.endswith('.pth'):
+                            model_files.append(os.path.join(model_dir, f))
+                    
+                    # 按文件名中的数字排序（提取model_XXX中的数字）
+                    import re
+                    def extract_number(path):
+                        match = re.search(r'model_(\d+)\.pth', os.path.basename(path))
+                        return int(match.group(1)) if match else 0
+                    model_files.sort(key=extract_number, reverse=True)
+                
+                # 尝试加载模型
                 model_loaded = False
                 for model_file in model_files:
                     try:
-                        if os.path.exists(model_file):
-                            # 检查是否是改进版模型
-                            if 'improved' in model_file:
-                                from improved_policy_value_net import ImprovedPolicyValueAgent
-                                self.ai_agent = ImprovedPolicyValueAgent(board_size=self.board_size)
-                            else:
-                                self.ai_agent = PolicyValueAgent(board_size=self.board_size)
-                            
-                            self.ai_agent.load_model(model_file)
-                            print(f"模型已加载: {model_file}")
-                            model_loaded = True
-                            break
+                        self.ai_agent = ImprovedPolicyValueAgent(board_size=self.board_size, num_res_blocks=NUM_RES_BLOCKS, num_channels=NUM_CHANNELS)
+                        self.ai_agent.load_model(model_file)
+                        print(f"模型已加载: {model_file}")
+                        model_loaded = True
+                        break
                     except Exception as e:
+                        print(f"加载 {model_file} 失败: {e}")
                         continue
                 
+                # 如果没有找到可用的模型，使用未训练的模型
                 if not model_loaded:
-                    messagebox.showwarning("警告", "未找到任何AlphaZero模型文件")
-                    self.update_status("未找到模型")
-                    return
-            else:  # 规则AI
+                    messagebox.showwarning("警告", "未找到任何AlphaZero模型文件，将使用未训练的模型")
+                    self.ai_agent = ImprovedPolicyValueAgent(board_size=self.board_size, num_res_blocks=NUM_RES_BLOCKS, num_channels=NUM_CHANNELS)
+            else:
                 self.ai_agent = RuleBasedAI(board_size=self.board_size)
         except Exception as e:
-            messagebox.showerror("错误", f"加载AI失败: {e}\n请确保模型文件存在")
+            messagebox.showerror("错误", f"加载AI失败: {e}")
             self.update_status("加载失败")
             return
         
@@ -236,7 +197,7 @@ class GomokuGUI:
         self.game_over = False
         self.last_move = None
         self.human_color = 1 if self.color_var.get() == "黑棋" else -1
-        self.move_history = []  # 清空历史记录
+        self.move_history = []
         
         self.redraw_board()
         
@@ -252,7 +213,7 @@ class GomokuGUI:
         self.start_game()
     
     def undo_move(self):
-        """悔棋（撤销AI和人类各一步，然后人类重新下）"""
+        """悔棋"""
         if self.game_over:
             messagebox.showwarning("提示", "游戏已结束，无法悔棋")
             return
@@ -261,51 +222,40 @@ class GomokuGUI:
             messagebox.showwarning("提示", "请先开始游戏")
             return
         
-        # 需要至少有2步棋（人类+AI）
         if len(self.move_history) < 2:
             messagebox.showwarning("提示", "没有可以悔的棋")
             return
         
-        # 检查最后一步是否是AI下的
         last_move = self.move_history[-1]
         if last_move['player'] == self.human_color:
             messagebox.showwarning("提示", "当前轮到你下棋，无需悔棋")
             return
         
-        # 1. 撤销AI的一步（最后一步）
+        # 撤销AI的一步
         self.move_history.pop()
         
-        # 2. 撤销人类的一步（倍数第二步）
+        # 撤销人类的一步
         if len(self.move_history) > 0:
             self.move_history.pop()
         
-        # 3. 恢复棋盘到悔棋前的状态
+        # 恢复棋盘状态
         if len(self.move_history) > 0:
-            # 还有更早的历史，恢复到那个状态
             last_state = self.move_history[-1]
-            # 恢复棋盘：使用历史记录中的board + 手动放回那一步的棋
             self.env.board = last_state['board'].copy()
-            # 放回那一步的棋
             action = last_state['action']
             row = action // self.board_size
             col = action % self.board_size
             self.env.board[row, col] = last_state['player']
-            # 设置当前玩家（下一个玩家应该是人类）
             self.env.current_player = self.human_color
-            # 恢复最后一步标记
             self.last_move = (row, col)
         else:
-            # 没有更早的历史，回到开局
             self.env.reset()
             self.last_move = None
             self.env.current_player = self.human_color
         
         self.env.done = False
-        
-        # 重绘棋盘
         self.redraw_board()
         
-        # 更新状态
         player_name = "黑棋" if self.env.current_player == 1 else "白棋"
         self.update_status(f"已悔棋，轮到你了 ({player_name})")
     
@@ -314,15 +264,12 @@ class GomokuGUI:
         if self.game_over or self.ai_agent is None:
             return
         
-        # 检查是否轮到人类
         if self.env.current_player != self.human_color:
             return
         
-        # 计算点击位置
         col = round((event.x - self.cell_size) / self.cell_size)
         row = round((event.y - self.cell_size) / self.cell_size)
         
-        # 检查位置合法性
         if row < 0 or row >= self.board_size or col < 0 or col >= self.board_size:
             return
         
@@ -330,41 +277,42 @@ class GomokuGUI:
             messagebox.showwarning("提示", "此位置已有棋子")
             return
         
-        # 执行落子
+        # 禁手检查已禁用（训练时不用，与人类对战也不用）
+        # if self.human_color == 1 and self.env.current_player == 1:
+        #     forbidden = self.env.check_forbidden(row, col)
+        #     if forbidden:
+        #         forbidden_names = {
+        #             'double_three': '三三禁手',
+        #             'double_four': '四四禁手',
+        #             'overline': '长连禁手'
+        #         }
+        #         messagebox.showwarning("禁手", f"此位置为{forbidden_names.get(forbidden, '禁手')}，黑棋不能下！")
+        #         return
+        
         action = row * self.board_size + col
         self.execute_move(action, is_human=True)
     
     def execute_move(self, action, is_human=False):
-        """
-        执行一步棋
-        Args:
-            action: 动作索引
-            is_human: 是否为人类落子
-        """
+        """执行一步棋"""
         row = action // self.board_size
         col = action % self.board_size
         
-        # 保存当前状态（用于悔棋）
         board_backup = self.env.board.copy()
         current_player = self.env.current_player
         done_backup = self.env.done
         
-        # 执行动作
         state, reward, done, info = self.env.step(action)
         self.last_move = (row, col)
         
-        # 记录历史（动作、玩家、执行前的棋盘状态）
         self.move_history.append({
             'action': action,
             'player': current_player,
-            'board': board_backup,  # 执行前的棋盘状态（不包含当前这步）
+            'board': board_backup,
             'done': done_backup
         })
         
-        # 重绘棋盘
         self.redraw_board()
         
-        # 检查游戏是否结束
         if done:
             self.game_over = True
             winner = info.get('winner', 0)
@@ -380,7 +328,6 @@ class GomokuGUI:
                 messagebox.showinfo("游戏结束", "平局！")
             return
         
-        # 如果是人类落子，轮到AI
         if is_human:
             self.update_status("AI思考中...")
             self.root.after(300, self.ai_move)
@@ -393,26 +340,17 @@ class GomokuGUI:
         if self.game_over:
             return
         
-        state = self.env._get_observation()
-        valid_actions = self.env.get_valid_actions()
-        
-        # 根据AI类型选择动作
-        if self.ai_type == "DQN":
-            if self.ai_agent is None:
-                raise ValueError("DQN AI agent not initialized")
-            action = self.ai_agent.select_action(state, valid_actions, training=False)
-        elif self.ai_type == "AlphaZero":
-            if self.ai_agent is None:
-                raise ValueError("AlphaZero AI agent not initialized")
-            # 大幅增加MCTS搜索次数，显著提升AI智能
-            mcts = MCTS(self.ai_agent.policy_value_fn, n_simulations=3200, c_puct=5.0)
-            action, _ = mcts.get_action(self.env, temp=1e-3)
-        else:  # 规则AI
-            if self.ai_agent is None:
-                raise ValueError("Rule-based AI agent not initialized")
+        if self.ai_type == "AlphaZero":
+            # 使用合理的MCTS参数
+            mcts = MCTS(
+                self.ai_agent.policy_value_fn, 
+                n_simulations=MCTS_SIMULATIONS_PLAY,
+                c_puct=MCTS_C_PUCT
+            )
+            action, _ = mcts.get_action(self.env, temp=1e-3, add_noise=False)
+        else:
             action = self.ai_agent.get_action(self.env)
         
-        # 执行AI落子
         self.execute_move(int(action), is_human=False)
     
     def update_status(self, text, color="#2196F3"):
